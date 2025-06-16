@@ -1,0 +1,16 @@
+{
+  "name": "pd2svgwrapper",
+  "version": "0.1.0",
+  "dependencies": [
+    "pkgconf",
+    "glib",
+    "cairo",
+    {
+      "name": "poppler",
+      "features": [
+        "glib",
+        "cairo"
+      ]
+    }
+  ]
+}
