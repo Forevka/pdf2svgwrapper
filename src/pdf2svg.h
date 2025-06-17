@@ -20,10 +20,11 @@ extern "C" {
         int*                out_page_count
     );
 
-    DLL_EXPORT unsigned char* pdf_get_page_svg(
+    DLL_EXPORT unsigned char* pdf_get_page_data(
         void* doc_handle,
         int   page_num,
-        int*  out_svg_len
+        int*  out_svg_len,
+        bool* out_is_svg
     );
 
     DLL_EXPORT void pdf_close_doc(void* doc_handle);
