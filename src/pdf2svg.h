@@ -23,6 +23,8 @@ extern "C" {
     DLL_EXPORT unsigned char* pdf_get_page_data(
         void* doc_handle,
         int   page_num,
+        bool  force_to_png,
+        int   dpi,
         int*  out_svg_len,
         bool* out_is_svg
     );

@@ -35,6 +35,9 @@ void* pdf_open_doc(const unsigned char* pdf_data, int pdf_len, int* out_page_cou
     auto* doc = poppler_document_new_from_bytes(bytes, nullptr, &err);
     if (!doc) {
         g_bytes_unref(bytes);
+        if (err)
+            g_error_free(err);
+        *out_page_count = 0;
         return nullptr;
     }
     auto* ctx = new PdfDoc{ bytes, doc, poppler_document_get_n_pages(doc) };
@@ -43,72 +46,111 @@ void* pdf_open_doc(const unsigned char* pdf_data, int pdf_len, int* out_page_cou
 }
 
 unsigned char*
-pdf_get_page_data(void* doc_handle,
-                  int   page_num,
-                  int*  out_len,
-                  bool* out_is_svg)
+pdf_get_page_data(void*   doc_handle,
+                                 int     page_num,
+                                 bool    force_to_png,
+                                 int     dpi,
+                                 int*    out_len,
+                                 bool*   out_is_svg)
 {
     auto* ctx = static_cast<PdfDoc*>(doc_handle);
     PopplerPage* page = poppler_document_get_page(ctx->doc, page_num);
+    if (!page) {
+        *out_len    = 0;
+        *out_is_svg = false;
+        return nullptr;
+    }
 
     double w, h;
     poppler_page_get_size(page, &w, &h);
 
-    // if there is any selectable text
-    char* txt = poppler_page_get_text(page);
-    bool has_text = txt && *txt;
-    g_free(txt);
-
-    GList* images = poppler_page_get_image_mapping(page);
+    bool has_text = false;
     bool image_only = false;
 
-    // iterate WITHOUT freeing first
-    for (GList* iter = images; iter; iter = iter->next) {
-        auto* m = static_cast<PopplerImageMapping*>(iter->data);
-        // check if the mapped image covers ~the entire page
+    if (!force_to_png) {
+        char* txt = poppler_page_get_text(page);
+        has_text = (txt && *txt != '\0');
+        g_free(txt);
+
+        GList* images = poppler_page_get_image_mapping(page);
         const double tol = 0.5;
-        if (fabs(m->area.x1) < tol &&
-            fabs(m->area.y1) < tol &&
-            fabs(m->area.x2 - w) < tol &&
-            fabs(m->area.y2 - h) < tol)
-        {
-            image_only = true;
-            break;
+
+        for (GList* iter = images; iter; iter = iter->next) {
+            auto* m = static_cast<PopplerImageMapping*>(iter->data);
+            if (fabs(m->area.x1) < tol &&
+                fabs(m->area.y1) < tol &&
+                fabs(m->area.x2 - w) < tol &&
+                fabs(m->area.y2 - h) < tol)
+            {
+                image_only = true;
+                break;
+            }
         }
+        poppler_page_free_image_mapping(images);
+    } else {
+        image_only = true;
     }
 
-    poppler_page_free_image_mapping(images);
-
     std::vector<unsigned char> buf;
-
     if (image_only && !has_text) {
-        // --- Rasterize to PNG ---
-        auto* img_surf = cairo_image_surface_create(
-                             CAIRO_FORMAT_ARGB32,
-                             static_cast<int>(w),
-                             static_cast<int>(h));
-        auto* img_cr   = cairo_create(img_surf);
+        if (dpi <= 0)
+            dpi = 72;
+
+        double scale      = dpi / 72.0;
+        int    width_px   = static_cast<int>(std::ceil(w * scale));
+        int    height_px  = static_cast<int>(std::ceil(h * scale));
+
+        // Rasterize to PNG
+        cairo_surface_t* img_surf = cairo_image_surface_create(
+            CAIRO_FORMAT_ARGB32,
+            width_px,
+            height_px);
+
+        cairo_t* img_cr = cairo_create(img_surf);
+
+        cairo_scale(img_cr, scale, scale);
+
         poppler_page_render(page, img_cr);
+
         cairo_destroy(img_cr);
 
         cairo_surface_write_to_png_stream(img_surf, write_cb, &buf);
+
         cairo_surface_destroy(img_surf);
+
         *out_is_svg = false;
-    }
-    else {
-        // --- Emit SVG ---
-        auto* svg_surf = cairo_svg_surface_create_for_stream(
-                             write_cb, &buf, w, h);
-        auto* svg_cr   = cairo_create(svg_surf);
+    } else {
+        // Emit SVG
+        cairo_surface_t* svg_surf = cairo_svg_surface_create_for_stream(
+            write_cb, &buf, w, h);
+
+        cairo_t* svg_cr = cairo_create(svg_surf);
         poppler_page_render_for_printing(page, svg_cr);
+
         cairo_destroy(svg_cr);
         cairo_surface_destroy(svg_surf);
+
         *out_is_svg = true;
     }
 
+    g_object_unref(page);
+
     *out_len = static_cast<int>(buf.size());
-    auto* out = static_cast<unsigned char*>(std::malloc(buf.size()));
+    if (*out_len == 0) {
+        *out_len    = 0;
+        *out_is_svg = false;
+        return nullptr;
+    }
+
+    unsigned char* out = static_cast<unsigned char*>(std::malloc(buf.size()));
+    if (!out) {
+        *out_len    = 0;
+        *out_is_svg = false;
+        return nullptr;
+    }
+
     std::memcpy(out, buf.data(), buf.size());
+
     return out;
 }
 
