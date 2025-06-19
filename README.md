@@ -1,11 +1,11 @@
 # pdf2svgwrapper
 
-`pdf2svgwrapper` is a small C/C++ library that converts PDF pages to SVG images using the Poppler and Cairo libraries. The project uses [vcpkg](https://github.com/microsoft/vcpkg) for dependency management and builds a shared library for Windows or Linux.
+`pdf2svgwrapper` is a small C/C++ library that converts PDF pages to SVG or PNG images using the Poppler and Cairo libraries. The project uses [vcpkg](https://github.com/microsoft/vcpkg) for dependency management and builds a shared library for Windows or Linux.
 
 ## Features
 
 - Loads a PDF document from memory and reports the number of pages.
-- Renders individual pages to SVG format.
+- Renders individual pages to SVG or PNG (image-only pages are rasterized and DPI can be specified).
 - Simple C API for integration with other languages.
 
 ## Getting the Source
@@ -44,9 +44,10 @@ int main() {
 
     for (int i = 0; i < page_count; ++i) {
         int len = 0;
-        unsigned char* svg = pdf_get_page_svg(doc, i, &len);
-        /* use the SVG data */
-        pdf_release_buffer(svg);
+        bool is_svg = false;
+        unsigned char* data = pdf_get_page_data(doc, i, false, 0, &len, &is_svg);
+        /* use the data (SVG when is_svg is true, otherwise PNG) */
+        pdf_release_buffer(data);
     }
 
     pdf_close_doc(doc);
@@ -54,6 +55,10 @@ int main() {
 ```
 
 Refer to `src/pdf2svg.h` for the full function declarations.
+
+`pdf_get_page_data` returns SVG data when the page contains text and PNG data for
+image-only pages. Set `force_to_png` to `true` to always get PNG output. The `dpi`
+argument controls the resolution of PNG output (72 DPI by default).
 
 ## Dependencies
 
